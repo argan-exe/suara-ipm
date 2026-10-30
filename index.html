@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Perhitungan Suara Formatur IPM</title>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--primary:#1e6b52;--text:#1f2937;--muted:#6b7280;--border:#e5e7eb;--danger:#b91c1c}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text)}
+header{background:var(--primary);color:#fff;padding:16px 20px}
+header h1{margin:0;font-size:20px}
+header p{margin:4px 0 0;font-size:13px;opacity:.85}
+main{max-width:1000px;margin:0 auto;padding:20px;display:grid;gap:20px}
+.card{background:var(--card);border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h2{margin:0 0 12px;font-size:17px}
+.btn{background:var(--primary);color:#fff;border:0;border-radius:8px;padding:9px 14px;cursor:pointer;font-size:14px}
+.btn.secondary{background:#fff;color:var(--primary);border:1px solid var(--primary)}
+.btn.danger{background:var(--danger)}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
+.cand{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
+.cand img{width:100%;aspect-ratio:3/4;object-fit:cover;background:#e5e7eb;display:block}
+.noimg{width:100%;aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;text-align:center;background:#e5e7eb;color:var(--muted);font-size:13px;padding:8px}
+.info{padding:10px;display:grid;gap:8px}
+.urut{font-size:12px;color:var(--muted)}
+input[type=number],input[type=text]{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:15px}
+label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stat{background:var(--bg);border-radius:10px;padding:12px}
+.stat .val{font-size:22px;font-weight:700}
+.stat .pct{font-size:14px;color:var(--primary);font-weight:600}
+.stat .lbl{font-size:12px;color:var(--muted)}
+.inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:14px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
+td.num,th.num{text-align:right}
+.bar{height:8px;background:var(--border);border-radius:4px;overflow:hidden;min-width:80px}
+.bar>div{height:100%;background:var(--primary)}
+tr.winner{background:#fff8e1}
+.warn{color:var(--danger);font-size:13px;margin-top:10px;font-weight:600}
+.hint{font-size:13px;color:var(--muted);margin:0 0 12px}
+.status{margin-top:12px;font-weight:600}
+.thumb{width:44px;height:58px;object-fit:cover;border-radius:6px;background:#e5e7eb;display:inline-block;vertical-align:middle;margin-right:8px}
+#repoBox{display:none;border:1px dashed var(--danger);padding:12px;border-radius:10px;margin-bottom:12px}
+@media print{.no-print{display:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Perhitungan Suara Formatur IPM</h1>
+  <p>SMK Muhammadiyah Gisting</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. Suara Masuk</h2>
+    <div class="summary" id="summary"></div>
+    <div class="inputs no-print">
+      <div><label>Jumlah hadir / pemilih</label><input type="number" min="0" id="hadirInput"></div>
+      <div><label>Suara tidak sah</label><input type="number" min="0" id="invalidInput"></div>
+    </div>
+    <div id="warn" class="warn"></div>
+  </section>
+
+  <section class="card">
+    <h2>2. Input Suara per Formatur</h2>
+    <div id="repoBox" class="no-print">
+      <p class="hint">Repo GitHub tidak terdeteksi (halaman ini gak dibuka dari GitHub Pages). Isi manual, format <b>owner/nama-repo</b>:</p>
+      <input type="text" id="repoInput" placeholder="contoh: argan/ipm-suara">
+      <div class="actions"><button class="btn" id="repoSave">Simpan & muat foto</button></div>
+    </div>
+    <p class="hint" id="info">Memuat foto...</p>
+    <div class="grid" id="candGrid"></div>
+    <div class="actions no-print">
+      <button class="btn secondary" id="reloadBtn">Muat ulang daftar foto</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>3. Rekap Hasil</h2>
+    <div id="rekap"></div>
+    <div class="status" id="status"></div>
+    <div class="actions no-print">
+      <button class="btn" id="exportBtn">Export CSV</button>
+      <button class="btn secondary" id="printBtn">Cetak</button>
+      <button class="btn danger" id="resetBtn">Reset Suara</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const KEY = 'ipm-suara-v3';
+const FOLDERS = Array.from({ length: 17 }, (_, i) => String(i + 1).padStart(2, '0'));
+const IMG_RE = /\.(jpe?g|png|webp|gif)$/i;
+const $ = s => document.querySelector(s);
+
+let store = loadStore();
+let cands = [];
+
+function loadStore(){
+  const empty = { votes: {}, names: {}, invalid: 0, hadir: 0, repo: null, cache: {} };
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY));
+    if (s && s.votes) return Object.assign(empty, s);
+  } catch (e) {}
+  return empty;
+}
+function saveStore(){ localStorage.setItem(KEY, JSON.stringify(store)); }
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function pct(a, b){ return b ? (a / b * 100).toFixed(1) + '%' : '0%'; }
+
+// Di GitHub Pages, owner & repo bisa dibaca dari alamat halaman.
+function getRepo(){
+  const host = location.hostname;
+  if (host.endsWith('.github.io')) {
+    const owner = host.split('.')[0];
+    const parts = location.pathname.split('/').filter(Boolean);
+    const repo = parts.length ? parts[0] : host;
+    return { owner, repo };
+  }
+  return store.repo || null;
+}
+
+async function fetchFolder(n, repo){
+  const url = `https://api.github.com/repos/${repo.owner}/${repo.repo}/contents/foto/${n}`;
+  const r = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const arr = await r.json();
+  return arr
+    .filter(x => x.type === 'file' && IMG_RE.test(x.name))
+    .map(x => x.name)
+    .sort();
+}
+
+async function loadAll(){
+  const repo = getRepo();
+  const info = $('#info');
+  $('#repoBox').style.display = repo ? 'none' : 'block';
+
+  if (!repo) {
+    info.textContent = 'Repo belum terdeteksi. Isi owner/repo di kotak di atas.';
+    buildCands({});
+    renderCards(); renderAll();
+    return;
+  }
+
+  info.textContent = 'Memuat daftar foto dari GitHub...';
+  const results = await Promise.all(FOLDERS.map(async n => {
+    if (store.cache[n]) return { n, files: store.cache[n] };
+    try {
+      const files = await fetchFolder(n, repo);
+      store.cache[n] = files;
+      return { n, files };
+    } catch (e) {
+      return { n, files: null, err: e.message };
+    }
+  }));
+  saveStore();
+
+  const map = {};
+  results.forEach(r => map[r.n] = r.files || []);
+  buildCands(map);
+
+  const errs = results.filter(r => r.files === null);
+  info.textContent = errs.length
+    ? `Gagal ambil ${errs.length} folder (${errs[0].err}). Pastikan repo publik dan dibuka lewat link GitHub Pages, lalu klik "Muat ulang".`
+    : `Foto dimuat dari ${repo.owner}/${repo.repo}. Nama di bawah foto bisa diedit manual.`;
+
+  renderCards();
+  renderAll();
+}
+
+function buildCands(map){
+  cands = FOLDERS.map(n => {
+    const file = (map[n] || [])[0] || null;
+    const defName = file ? file.replace(/\.[^.]+$/, '').replace(/_/g, ' ').trim() : '';
+    return {
+      n,
+      no: parseInt(n, 10),
+      file,
+      nama: store.names[n] ?? defName,
+      votes: store.votes[n] || 0
+    };
+  });
+}
+
+function photoUrl(c){ return `foto/${c.n}/${encodeURIComponent(c.file)}`; }
+function displayName(c){ return c.nama || `Kandidat ${c.n}`; }
+
+function renderCards(){
+  const wrap = $('#candGrid');
+  wrap.innerHTML = cands.map((c, i) => `
+    <div class="cand">
+      ${c.file
+        ? `<img src="${photoUrl(c)}" alt="${esc(displayName(c))}" data-i="${i}">`
+        : `<div class="noimg">Belum ada foto<br>(foto/${c.n}/)</div>`}
+      <div class="info">
+        <div class="urut">Nomor urut ${c.n}</div>
+        <div>
+          <label>Nama formatur</label>
+          <input type="text" class="name-input" data-i="${i}" value="${esc(c.nama)}" placeholder="Isi nama formatur">
+        </div>
+        <div>
+          <label>Jumlah suara</label>
+          <input type="number" min="0" inputmode="numeric" class="vote-input" data-i="${i}" value="${c.votes}">
+        </div>
+      </div>
+    </div>`).join('');
+
+  wrap.querySelectorAll('img').forEach(img => {
+    img.addEventListener('error', () => {
+      const div = document.createElement('div');
+      div.className = 'noimg';
+      div.textContent = 'Foto gagal dimuat';
+      img.replaceWith(div);
+    });
+  });
+
+  wrap.querySelectorAll('.name-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const c = cands[inp.dataset.i];
+      c.nama = inp.value;
+      store.names[c.n] = inp.value;
+      saveStore();
+      renderRekap();
+    });
+  });
+
+  wrap.querySelectorAll('.vote-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const c = cands[inp.dataset.i];
+      c.votes = Math.max(0, parseInt(inp.value, 10) || 0);
+      store.votes[c.n] = c.votes;
+      saveStore();
+      renderSummary();
+      renderRekap();
+    });
+  });
+}
+
+function totals(){
+  const sah = cands.reduce((s, c) => s + c.votes, 0);
+  const invalid = store.invalid || 0;
+  const masuk = sah + invalid;
+  const hadir = store.hadir || 0;
+  const sisa = hadir ? hadir - masuk : 0;
+  return { sah, invalid, masuk, hadir, sisa };
+}
+
+function renderSummary(){
+  const t = totals();
+  $('#summary').innerHTML = `
+    <div class="stat"><div class="val">${t.hadir}</div><div class="lbl">Hadir / pemilih</div></div>
+    <div class="stat"><div class="val">${t.masuk}</div><div class="pct">${t.hadir ? pct(t.masuk, t.hadir) : '-'}</div><div class="lbl">Total suara masuk (dari hadir)</div></div>
+    <div class="stat"><div class="val">${t.sah}</div><div class="pct">${pct(t.sah, t.masuk)}</div><div class="lbl">Suara sah (dari suara masuk)</div></div>
+    <div class="stat"><div class="val">${t.invalid}</div><div class="pct">${pct(t.invalid, t.masuk)}</div><div class="lbl">Suara tidak sah (dari suara masuk)</div></div>
+    <div class="stat"><div class="val">${t.hadir ? t.sisa : '-'}</div><div class="pct">${t.hadir ? pct(t.sisa, t.hadir) : '-'}</div><div class="lbl">Belum memakai hak (dari hadir)</div></div>`;
+  $('#warn').textContent = (t.hadir && t.masuk > t.hadir)
+    ? `⚠ Total suara masuk (${t.masuk}) melebihi jumlah hadir (${t.hadir})!` : '';
+}
+
+function renderRekap(){
+  const t = totals();
+  const ranked = [...cands].sort((a, b) => b.votes - a.votes || a.no - b.no);
+  const top = ranked[0] ? ranked[0].votes : 0;
+  const topCount = ranked.filter(c => c.votes === top).length;
+
+  $('#rekap').innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Rank</th><th>No</th><th>Formatur</th><th class="num">Suara</th>
+        <th class="num">% suara sah</th><th class="num">% hadir</th><th>Grafik</th>
+      </tr></thead>
+      <tbody>
+        ${ranked.map((c, i) => {
+          const pSah = t.sah ? c.votes / t.sah * 100 : 0;
+          const isTop = top > 0 && c.votes === top;
+          return `<tr class="${isTop ? 'winner' : ''}">
+            <td>${i + 1}</td>
+            <td>${c.n}</td>
+            <td>${c.file ? `<img class="thumb" src="${photoUrl(c)}" alt="">` : ''}${esc(displayName(c))}</td>
+            <td class="num">${c.votes}</td>
+            <td class="num">${pSah.toFixed(1)}%</td>
+            <td class="num">${pct(c.votes, t.hadir)}</td>
+            <td><div class="bar"><div style="width:${pSah}%"></div></div></td>
+          </tr>`;
+        }).join('')}
+        <tr><td colspan="3"><b>Total suara sah</b></td><td class="num"><b>${t.sah}</b></td><td class="num"><b>100%</b></td><td class="num"><b>${pct(t.sah, t.hadir)}</b></td><td></td></tr>
+        <tr><td colspan="3">Suara tidak sah</td><td class="num">${t.invalid}</td><td class="num">${pct(t.invalid, t.masuk)} dari masuk</td><td class="num">${pct(t.invalid, t.hadir)}</td><td></td></tr>
+      </tbody>
+    </table>`;
+
+  if (top === 0) $('#status').textContent = 'Belum ada suara masuk.';
+  else if (topCount > 1) $('#status').textContent = `Seri di posisi teratas (${top} suara).`;
+  else $('#status').textContent = `Teratas sementara: ${displayName(ranked[0])} (${top} suara, ${pct(top, t.sah)} dari suara sah).`;
+}
+
+function renderInputs(){
+  $('#hadirInput').value = store.hadir || '';
+  $('#invalidInput').value = store.invalid || '';
+}
+
+function renderAll(){
+  renderInputs();
+  renderSummary();
+  renderRekap();
+}
+
+$('#hadirInput').addEventListener('input', e => {
+  store.hadir = Math.max(0, parseInt(e.target.value, 10) || 0);
+  saveStore(); renderSummary(); renderRekap();
+});
+$('#invalidInput').addEventListener('input', e => {
+  store.invalid = Math.max(0, parseInt(e.target.value, 10) || 0);
+  saveStore(); renderSummary(); renderRekap();
+});
+
+$('#repoSave').addEventListener('click', () => {
+  const [owner, repo] = $('#repoInput').value.trim().split('/');
+  if (!owner || !repo) { alert('Format harus owner/nama-repo'); return; }
+  store.repo = { owner, repo };
+  store.cache = {};
+  saveStore();
+  loadAll();
+});
+
+$('#reloadBtn').addEventListener('click', () => {
+  store.cache = {};
+  saveStore();
+  loadAll();
+});
+
+$('#exportBtn').addEventListener('click', () => {
+  const t = totals();
+  const ranked = [...cands].sort((a, b) => b.votes - a.votes || a.no - b.no);
+  const rows = [
+    ['Rank', 'No Urut', 'Formatur', 'Suara', '% dari suara sah', '% dari hadir'],
+    ...ranked.map((c, i) => [i + 1, c.n, displayName(c), c.votes, pct(c.votes, t.sah), pct(c.votes, t.hadir)]),
+    [],
+    ['Hadir / pemilih', t.hadir],
+    ['Total suara masuk', t.masuk, t.hadir ? pct(t.masuk, t.hadir) + ' dari hadir' : ''],
+    ['Suara sah', t.sah, pct(t.sah, t.masuk) + ' dari suara masuk'],
+    ['Suara tidak sah', t.invalid, pct(t.invalid, t.masuk) + ' dari suara masuk'],
+    ['Belum memakai hak', t.sisa, t.hadir ? pct(t.sisa, t.hadir) + ' dari hadir' : '']
+  ];
+  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'rekap-suara-formatur-ipm.csv';
+  a.click();
+});
+
+$('#printBtn').addEventListener('click', () => window.print());
+
+$('#resetBtn').addEventListener('click', () => {
+  if (!confirm('Reset semua suara, suara tidak sah, dan jumlah hadir? Nama formatur tetap.')) return;
+  store.votes = {};
+  store.invalid = 0;
+  store.hadir = 0;
+  saveStore();
+  cands.forEach(c => c.votes = 0);
+  renderCards();
+  renderAll();
+});
+
+buildCands({});
+renderCards();
+renderAll();
+loadAll();
+</script>
+</body>
+</html>
