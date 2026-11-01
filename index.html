@@ -32,6 +32,7 @@ label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px}
 .stat .pct{font-size:14px;color:var(--primary);font-weight:600}
 .stat .lbl{font-size:12px;color:var(--muted)}
 .inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:14px}
+.note{font-size:13px;color:var(--muted);margin-top:10px}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{padding:8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
 td.num,th.num{text-align:right}
@@ -54,17 +55,19 @@ tr.winner{background:#fff8e1}
 
 <main>
   <section class="card">
-    <h2>1. Suara Masuk</h2>
+    <h2>1. Data Surat Suara</h2>
     <div class="summary" id="summary"></div>
     <div class="inputs no-print">
       <div><label>Jumlah hadir / pemilih</label><input type="number" min="0" id="hadirInput"></div>
-      <div><label>Suara tidak sah</label><input type="number" min="0" id="invalidInput"></div>
+      <div><label>Surat suara sah</label><input type="number" min="0" id="suratInput"></div>
+      <div><label>Surat suara tidak sah</label><input type="number" min="0" id="invalidInput"></div>
     </div>
+    <p class="note">Tiap pemilih boleh memilih maksimal <b>9</b> formatur. Angka pilihan per formatur = berapa pemilih yang memilih formatur itu.</p>
     <div id="warn" class="warn"></div>
   </section>
 
   <section class="card">
-    <h2>2. Input Suara per Formatur</h2>
+    <h2>2. Input Pilihan per Formatur</h2>
     <div id="repoBox" class="no-print">
       <p class="hint">Repo GitHub tidak terdeteksi (halaman ini gak dibuka dari GitHub Pages). Isi manual, format <b>owner/nama-repo</b>:</p>
       <input type="text" id="repoInput" placeholder="contoh: argan/ipm-suara">
@@ -91,6 +94,7 @@ tr.winner{background:#fff8e1}
 
 <script>
 const KEY = 'ipm-suara-v3';
+const MAX_PILIHAN = 9;
 const FOLDERS = Array.from({ length: 17 }, (_, i) => String(i + 1).padStart(2, '0'));
 const IMG_RE = /\.(jpe?g|png|webp|gif)$/i;
 const $ = s => document.querySelector(s);
@@ -99,7 +103,7 @@ let store = loadStore();
 let cands = [];
 
 function loadStore(){
-  const empty = { votes: {}, names: {}, invalid: 0, hadir: 0, repo: null, cache: {} };
+  const empty = { votes: {}, names: {}, surat: 0, invalid: 0, hadir: 0, repo: null, cache: {} };
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
     if (s && s.votes) return Object.assign(empty, s);
@@ -112,7 +116,6 @@ function esc(s){
 }
 function pct(a, b){ return b ? (a / b * 100).toFixed(1) + '%' : '0%'; }
 
-// Di GitHub Pages, owner & repo bisa dibaca dari alamat halaman.
 function getRepo(){
   const host = location.hostname;
   if (host.endsWith('.github.io')) {
@@ -129,10 +132,7 @@ async function fetchFolder(n, repo){
   const r = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const arr = await r.json();
-  return arr
-    .filter(x => x.type === 'file' && IMG_RE.test(x.name))
-    .map(x => x.name)
-    .sort();
+  return arr.filter(x => x.type === 'file' && IMG_RE.test(x.name)).map(x => x.name).sort();
 }
 
 async function loadAll(){
@@ -204,7 +204,7 @@ function renderCards(){
           <input type="text" class="name-input" data-i="${i}" value="${esc(c.nama)}" placeholder="Isi nama formatur">
         </div>
         <div>
-          <label>Jumlah suara</label>
+          <label>Jumlah pemilih yang memilih</label>
           <input type="number" min="0" inputmode="numeric" class="vote-input" data-i="${i}" value="${c.votes}">
         </div>
       </div>
@@ -241,25 +241,38 @@ function renderCards(){
   });
 }
 
+// Hitungan:
+// - surat masuk   = surat sah + surat tidak sah
+// - kuota pilihan = surat sah x 9
+// - % pemilih     = pemilih yang memilih formatur / surat sah  (bisa berjumlah > 100% di semua formatur, wajar)
+// - % pilihan     = pilihan formatur / total pilihan terisi     (semua formatur berjumlah 100%)
 function totals(){
-  const sah = cands.reduce((s, c) => s + c.votes, 0);
+  const surat = store.surat || 0;
   const invalid = store.invalid || 0;
-  const masuk = sah + invalid;
   const hadir = store.hadir || 0;
-  const sisa = hadir ? hadir - masuk : 0;
-  return { sah, invalid, masuk, hadir, sisa };
+  const masuk = surat + invalid;
+  const pilihan = cands.reduce((s, c) => s + c.votes, 0);
+  const kuota = surat * MAX_PILIHAN;
+  const belum = hadir ? Math.max(0, hadir - masuk) : 0;
+  return { surat, invalid, masuk, hadir, pilihan, kuota, belum };
 }
 
 function renderSummary(){
   const t = totals();
   $('#summary').innerHTML = `
     <div class="stat"><div class="val">${t.hadir}</div><div class="lbl">Hadir / pemilih</div></div>
-    <div class="stat"><div class="val">${t.masuk}</div><div class="pct">${t.hadir ? pct(t.masuk, t.hadir) : '-'}</div><div class="lbl">Total suara masuk (dari hadir)</div></div>
-    <div class="stat"><div class="val">${t.sah}</div><div class="pct">${pct(t.sah, t.masuk)}</div><div class="lbl">Suara sah (dari suara masuk)</div></div>
-    <div class="stat"><div class="val">${t.invalid}</div><div class="pct">${pct(t.invalid, t.masuk)}</div><div class="lbl">Suara tidak sah (dari suara masuk)</div></div>
-    <div class="stat"><div class="val">${t.hadir ? t.sisa : '-'}</div><div class="pct">${t.hadir ? pct(t.sisa, t.hadir) : '-'}</div><div class="lbl">Belum memakai hak (dari hadir)</div></div>`;
-  $('#warn').textContent = (t.hadir && t.masuk > t.hadir)
-    ? `⚠ Total suara masuk (${t.masuk}) melebihi jumlah hadir (${t.hadir})!` : '';
+    <div class="stat"><div class="val">${t.masuk}</div><div class="pct">${pct(t.masuk, t.hadir)}</div><div class="lbl">Surat masuk (dari hadir)</div></div>
+    <div class="stat"><div class="val">${t.surat}</div><div class="pct">${pct(t.surat, t.masuk)}</div><div class="lbl">Surat sah (dari surat masuk)</div></div>
+    <div class="stat"><div class="val">${t.invalid}</div><div class="pct">${pct(t.invalid, t.masuk)}</div><div class="lbl">Surat tidak sah (dari surat masuk)</div></div>
+    <div class="stat"><div class="val">${t.pilihan}</div><div class="pct">${pct(t.pilihan, t.kuota)}</div><div class="lbl">Pilihan terisi (dari kuota ${t.kuota})</div></div>
+    <div class="stat"><div class="val">${t.belum}</div><div class="pct">${pct(t.belum, t.hadir)}</div><div class="lbl">Belum memakai hak (dari hadir)</div></div>`;
+
+  const warns = [];
+  if (t.hadir && t.masuk > t.hadir) warns.push(`Surat masuk (${t.masuk}) melebihi jumlah hadir (${t.hadir}).`);
+  if (t.pilihan > t.kuota) warns.push(`Total pilihan (${t.pilihan}) melebihi kuota ${t.surat} surat x 9 = ${t.kuota}.`);
+  const kebanyakan = cands.filter(c => c.votes > t.surat && t.surat > 0);
+  if (kebanyakan.length) warns.push(`Ada formatur yang pemilihnya (${kebanyakan.map(c => c.n).join(', ')}) lebih banyak dari surat sah.`);
+  $('#warn').innerHTML = warns.map(w => `⚠ ${esc(w)}`).join('<br>');
 }
 
 function renderRekap(){
@@ -271,35 +284,40 @@ function renderRekap(){
   $('#rekap').innerHTML = `
     <table>
       <thead><tr>
-        <th>Rank</th><th>No</th><th>Formatur</th><th class="num">Suara</th>
-        <th class="num">% suara sah</th><th class="num">% hadir</th><th>Grafik</th>
+        <th>Rank</th><th>No</th><th>Formatur</th>
+        <th class="num">Pemilih</th>
+        <th class="num">% pemilih<br><small>(dari surat sah)</small></th>
+        <th class="num">% pilihan<br><small>(dari total pilihan)</small></th>
+        <th>Grafik</th>
       </tr></thead>
       <tbody>
         ${ranked.map((c, i) => {
-          const pSah = t.sah ? c.votes / t.sah * 100 : 0;
+          const pPemilih = t.surat ? c.votes / t.surat * 100 : 0;
+          const pPilihan = t.pilihan ? c.votes / t.pilihan * 100 : 0;
           const isTop = top > 0 && c.votes === top;
           return `<tr class="${isTop ? 'winner' : ''}">
             <td>${i + 1}</td>
             <td>${c.n}</td>
             <td>${c.file ? `<img class="thumb" src="${photoUrl(c)}" alt="">` : ''}${esc(displayName(c))}</td>
             <td class="num">${c.votes}</td>
-            <td class="num">${pSah.toFixed(1)}%</td>
-            <td class="num">${pct(c.votes, t.hadir)}</td>
-            <td><div class="bar"><div style="width:${pSah}%"></div></div></td>
+            <td class="num">${pPemilih.toFixed(1)}%</td>
+            <td class="num">${pPilihan.toFixed(1)}%</td>
+            <td><div class="bar"><div style="width:${Math.min(pPemilih, 100)}%"></div></div></td>
           </tr>`;
         }).join('')}
-        <tr><td colspan="3"><b>Total suara sah</b></td><td class="num"><b>${t.sah}</b></td><td class="num"><b>100%</b></td><td class="num"><b>${pct(t.sah, t.hadir)}</b></td><td></td></tr>
-        <tr><td colspan="3">Suara tidak sah</td><td class="num">${t.invalid}</td><td class="num">${pct(t.invalid, t.masuk)} dari masuk</td><td class="num">${pct(t.invalid, t.hadir)}</td><td></td></tr>
+        <tr><td colspan="3"><b>Total pilihan terisi</b></td><td class="num"><b>${t.pilihan}</b></td><td class="num"></td><td class="num"><b>100%</b></td><td></td></tr>
+        <tr><td colspan="3">Surat tidak sah</td><td class="num">${t.invalid}</td><td class="num">${pct(t.invalid, t.masuk)} dari surat masuk</td><td class="num">-</td><td></td></tr>
       </tbody>
     </table>`;
 
-  if (top === 0) $('#status').textContent = 'Belum ada suara masuk.';
-  else if (topCount > 1) $('#status').textContent = `Seri di posisi teratas (${top} suara).`;
-  else $('#status').textContent = `Teratas sementara: ${displayName(ranked[0])} (${top} suara, ${pct(top, t.sah)} dari suara sah).`;
+  if (top === 0) $('#status').textContent = 'Belum ada pilihan masuk.';
+  else if (topCount > 1) $('#status').textContent = `Seri di posisi teratas (${top} pemilih).`;
+  else $('#status').textContent = `Teratas sementara: ${displayName(ranked[0])} (${top} pemilih, ${pct(top, t.surat)} dari surat sah).`;
 }
 
 function renderInputs(){
   $('#hadirInput').value = store.hadir || '';
+  $('#suratInput').value = store.surat || '';
   $('#invalidInput').value = store.invalid || '';
 }
 
@@ -311,6 +329,10 @@ function renderAll(){
 
 $('#hadirInput').addEventListener('input', e => {
   store.hadir = Math.max(0, parseInt(e.target.value, 10) || 0);
+  saveStore(); renderSummary(); renderRekap();
+});
+$('#suratInput').addEventListener('input', e => {
+  store.surat = Math.max(0, parseInt(e.target.value, 10) || 0);
   saveStore(); renderSummary(); renderRekap();
 });
 $('#invalidInput').addEventListener('input', e => {
@@ -337,14 +359,15 @@ $('#exportBtn').addEventListener('click', () => {
   const t = totals();
   const ranked = [...cands].sort((a, b) => b.votes - a.votes || a.no - b.no);
   const rows = [
-    ['Rank', 'No Urut', 'Formatur', 'Suara', '% dari suara sah', '% dari hadir'],
-    ...ranked.map((c, i) => [i + 1, c.n, displayName(c), c.votes, pct(c.votes, t.sah), pct(c.votes, t.hadir)]),
+    ['Rank', 'No Urut', 'Formatur', 'Jumlah pemilih', '% pemilih (dari surat sah)', '% pilihan (dari total pilihan)'],
+    ...ranked.map((c, i) => [i + 1, c.n, displayName(c), c.votes, pct(c.votes, t.surat), pct(c.votes, t.pilihan)]),
     [],
     ['Hadir / pemilih', t.hadir],
-    ['Total suara masuk', t.masuk, t.hadir ? pct(t.masuk, t.hadir) + ' dari hadir' : ''],
-    ['Suara sah', t.sah, pct(t.sah, t.masuk) + ' dari suara masuk'],
-    ['Suara tidak sah', t.invalid, pct(t.invalid, t.masuk) + ' dari suara masuk'],
-    ['Belum memakai hak', t.sisa, t.hadir ? pct(t.sisa, t.hadir) + ' dari hadir' : '']
+    ['Surat masuk', t.masuk, pct(t.masuk, t.hadir) + ' dari hadir'],
+    ['Surat sah', t.surat, pct(t.surat, t.masuk) + ' dari surat masuk'],
+    ['Surat tidak sah', t.invalid, pct(t.invalid, t.masuk) + ' dari surat masuk'],
+    ['Total pilihan terisi', t.pilihan, 'kuota ' + t.kuota + ' (' + pct(t.pilihan, t.kuota) + ')'],
+    ['Belum memakai hak', t.belum, pct(t.belum, t.hadir) + ' dari hadir']
   ];
   const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
@@ -357,8 +380,9 @@ $('#exportBtn').addEventListener('click', () => {
 $('#printBtn').addEventListener('click', () => window.print());
 
 $('#resetBtn').addEventListener('click', () => {
-  if (!confirm('Reset semua suara, suara tidak sah, dan jumlah hadir? Nama formatur tetap.')) return;
+  if (!confirm('Reset semua pilihan, surat sah, surat tidak sah, dan jumlah hadir? Nama formatur tetap.')) return;
   store.votes = {};
+  store.surat = 0;
   store.invalid = 0;
   store.hadir = 0;
   saveStore();
